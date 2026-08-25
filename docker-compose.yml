@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  westgard-qc-evaluator:
+    build: .
+    container_name: westgard-qc-evaluator
+    ports:
+      - "8000:8000"
+    environment:
+      - AUDIT_SECRET_KEY=westgard-qc-evaluator-prod-audit-key-2026
+      - MODEL_PROVIDER=mock
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
