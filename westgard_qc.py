@@ -42,12 +42,33 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import sys
 from collections import OrderedDict
 from dataclasses import dataclass, field, asdict
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+
+
+# ---------------------------------------------------------------------------
+# Path validation
+# ---------------------------------------------------------------------------
+
+def _validate_path(path: str) -> str:
+    """Validate that a file path is safe (no traversal).
+
+    Rejects paths containing '..' components that could escape the
+    intended directory. Accepts any absolute or relative path that
+    does not attempt directory traversal.
+    """
+    p = Path(path)
+    # Reject paths that try to escape via traversal
+    if ".." in p.parts:
+        raise ValueError(f"Path traversal not allowed: {path}")
+    # Resolve to absolute path for consistent handling
+    return str(p.resolve())
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +84,7 @@ class Observation:
 
 def read_observations(path: str) -> List[Observation]:
     """Read a long-format QC data CSV with columns: run, level, value."""
+    path = _validate_path(path)
     with open(path, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         if reader.fieldnames is None:
@@ -93,6 +115,7 @@ def read_observations(path: str) -> List[Observation]:
 def read_established_stats(path: str) -> Dict[str, Tuple[float, float]]:
     """Read established mean/SD per control level from a CSV with columns:
     level, mean, sd."""
+    path = _validate_path(path)
     stats: Dict[str, Tuple[float, float]] = {}
     with open(path, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)

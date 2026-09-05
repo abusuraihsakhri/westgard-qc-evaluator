@@ -9,7 +9,15 @@ from agents.models import SystemTaskPayload
 from agents.supervisor import SystemSupervisor
 from agents.base import AuditLogger
 
-supervisor = SystemSupervisor(model_provider="mock")
+_supervisor = None
+
+
+def _get_supervisor():
+    """Lazily create the supervisor to avoid import-time side effects."""
+    global _supervisor
+    if _supervisor is None:
+        _supervisor = SystemSupervisor(model_provider="mock")
+    return _supervisor
 
 
 def main(argv=None):
@@ -53,7 +61,7 @@ def main(argv=None):
             status_descriptor=args.status,
             is_critical_flag=args.critical,
         )
-        dossier = supervisor.process_task(payload)
+        dossier = _get_supervisor().process_task(payload)
         print("=" * 80)
         print(f"  WESTGARD QC EVALUATOR")
         print(f"  Domain: Clinical & Biomedical AI | Standard: CAP / CLSI / ISO Standards")
@@ -69,7 +77,7 @@ def main(argv=None):
         return 0
 
     if args.command == "chat":
-        ans = supervisor.query_supervisory_chat(" ".join(args.query))
+        ans = _get_supervisor().query_supervisory_chat(" ".join(args.query))
         print(f"\n[Westgard Qc Evaluator Supervisor]:\n{ans}\n")
         return 0
 
@@ -96,7 +104,7 @@ def main(argv=None):
                 status_descriptor=r.get("status_descriptor", "NOMINAL"),
                 is_critical_flag=bool(r.get("is_critical_flag", False)),
             )
-            dossier = supervisor.process_task(payload)
+            dossier = _get_supervisor().process_task(payload)
             row_dict = dict(r)
             row_dict["overall_urgency"] = dossier.overall_urgency.value
             row_dict["integrity_status"] = dossier.integrity_status.value
