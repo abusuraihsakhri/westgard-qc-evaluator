@@ -12,6 +12,18 @@ from agents.base import AuditLogger
 _supervisor = None
 
 
+def parse_boolean(value):
+    """Parse CSV booleans without treating nonempty strings like 'false' as true."""
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in ("1", "true", "yes", "y"):
+        return True
+    if normalized in ("0", "false", "no", "n", ""):
+        return False
+    raise ValueError(f"Invalid boolean flag: {value!r}")
+
+
 def _get_supervisor():
     """Lazily create the supervisor to avoid import-time side effects."""
     global _supervisor
@@ -88,7 +100,7 @@ def main(argv=None):
         return 0
 
     if args.command == "batch":
-        with open(args.input, mode="r", encoding="utf-8-sig") as f:
+        with open(args.input, mode="r", encoding="utf-8-sig", newline="") as f:
             reader = csv.DictReader(f)
             fieldnames = list(reader.fieldnames or [])
             rows = list(reader)
@@ -102,7 +114,7 @@ def main(argv=None):
                 primary_metric=float(r.get("primary_metric", 15.0)),
                 secondary_metric=float(r.get("secondary_metric", 5.0)),
                 status_descriptor=r.get("status_descriptor", "NOMINAL"),
-                is_critical_flag=bool(r.get("is_critical_flag", False)),
+                is_critical_flag=parse_boolean(r.get("is_critical_flag", False)),
             )
             dossier = _get_supervisor().process_task(payload)
             row_dict = dict(r)
