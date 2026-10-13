@@ -8,6 +8,7 @@ import json
 import time
 import hmac
 import hashlib
+from copy import deepcopy
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
@@ -59,6 +60,8 @@ class AuditTrail:
     def __init__(self, secret_key: Optional[str] = None):
         resolved_key = secret_key or os.getenv("AUDIT_SECRET_KEY")
         if not resolved_key:
+            if os.getenv('APP_ENV', '').lower() == 'production':
+                raise RuntimeError('AUDIT_SECRET_KEY is required in production')
             import warnings
             warnings.warn(
                 "AUDIT_SECRET_KEY not set; using development-only default. "
@@ -95,14 +98,24 @@ class AuditTrail:
         return entry
 
     def verify_integrity(self) -> bool:
-        for i, entry in enumerate(self.logs):
-            prev = self.logs[i-1]["current_hash"] if i > 0 else "GENESIS_BLOCK_0000000000000000"
-            if entry["prev_hash"] != prev:
+        prev = "GENESIS_BLOCK_0000000000000000"
+        required = ("audit_id", "timestamp", "actor", "actor_tier",
+                    "event_type", "payload_hash", "prev_hash", "current_hash")
+        for entry in self.logs:
+            if not all(isinstance(entry.get(k), str) for k in required):
                 return False
+            if not hmac.compare_digest(entry["prev_hash"], prev):
+                return False
+            signing_input = "|".join(entry[k] for k in required[:-1])
+            expected = hmac.new(self.secret_key, signing_input.encode("utf-8"), hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(expected, entry["current_hash"]):
+                return False
+            prev = entry["current_hash"]
         return True
 
     def get_trail(self) -> List[Dict[str, Any]]:
-        return self.logs
+        # Callers must not be able to modify the internal signed ledger.
+        return deepcopy(self.logs)
 
 
 GLOBAL_AUDIT = AuditTrail()
