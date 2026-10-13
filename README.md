@@ -1,228 +1,109 @@
 # Westgard QC Evaluator
 
-> **Domain:** Clinical Decision Support & Biomedical Computing
-> **Reference Guidelines & Standards:** Westgard, Barry, Hunt & Groth (1981); CAP / CLSI / ISO Standards
+Evaluate laboratory quality-control measurements against the Westgard 1-2s, 1-3s, 2-2s, R-4s, 4-1s and 10x rules.
 
-<div align="center">
+## Browser application
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-3776AB.svg?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688.svg?logo=fastapi&logoColor=white)
-![Audit Trail](https://img.shields.io/badge/Audit-HMAC--SHA256_Tamper--Evident-brightgreen.svg)
-![Zero-PHI Guard](https://img.shields.io/badge/Guard-Zero--PHI_Outbound-blue.svg)
-![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker&logoColor=white)
+The standalone evaluator is in [web/](web/). It accepts observations and established statistics as CSV, evaluates each run, displays a Levey–Jennings-style standardized plot, and exports CSV or JSON reports. It works without a backend, external APIs or file uploads. Sample data are available from **Load example**.
 
-</div>
+GitHub Pages deployment is configured by [.github/workflows/pages.yml](.github/workflows/pages.yml); the public URL should only be advertised once deployment is verified.
 
----
+### CSV input
 
-## 📖 What It Does
+Observations:
 
-Evaluates clinical laboratory QC control results against the Westgard
-multirule system (Westgard, Barry, Hunt & Groth, 1981), flagging runs
-that violate the 1-3s, 2-2s, R-4s, 4-1s and 10x rules.
-
-The 1981 Westgard multirule scheme combines several individual control
-rules, applied both *within* a single analytical run (comparing
-different control levels measured together) and *across* consecutive
-runs (comparing successive results for the same control level):
-
-| Rule | Scope | Meaning |
-|------|-------|---------|
-| 1-2s | single point | one control exceeds mean +/- 2SD (warning only -- triggers inspection of the other rules, does not reject by itself) |
-| 1-3s | single point | one control exceeds mean +/- 3SD (reject) |
-| 2-2s | within-run / across | two controls exceed the same +2SD or -2SD limit -- either two different levels in the same run, or the same level in two consecutive runs (reject, systematic error) |
-| R-4s | within-run | the range between the highest and lowest control observation in the same run spans >= 4SD (reject, random error) |
-| 4-1s | across-run | four consecutive control observations for the same level exceed the same +1SD or -1SD limit (reject, systematic error) |
-| 10x | across-run | ten consecutive control observations for the same level fall on the same side of the mean (reject, systematic error) |
-
-A run is REJECTed if any rejection-class rule fires for any control
-level measured in that run, WARNING if only the 1-2s screening rule
-fires, and PASS otherwise.
-
----
-
-## ⚙️ Key Capabilities & Algorithmic Modules
-
-### 🔬 Core Algorithmic & Evaluation Engines
-
-- **`westgard_qc.py`** — Core Westgard multirule evaluation engine with CSV data ingestion, Levey-Jennings plotting, and JSON/CLI reporting.
-- **`agents/`** — Enterprise multi-agent orchestration with specialized workers (QC Invariant, Safety Escalation, Protocol Conformance).
-- **`enrichment.py`** — Enrichment feature suite with longitudinal tracking, alert escalation, and cross-institutional analytics.
-- **`cli.py`** — Command-line interface with audit, chat, batch processing, and REST server modes.
-- **`agents/api.py`** — FastAPI REST API server with health, metrics, audit, and chat endpoints.
-
----
-
-## 💻 Installation
-
-### Prerequisites
-- Python 3.10+
-- pip
-
-### Setup
-```bash
-# Clone the repository
-git clone https://github.com/abusuraihsakhri/westgard-qc-evaluator.git
-cd westgard-qc-evaluator
-
-# Create virtual environment (recommended)
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Or install with pyproject.toml
-pip install -e ".[test]"
-```
-
----
-
-## 💻 CLI Quickstart & Usage
-
-### 1. Westgard Multirule Evaluation (Core Algorithm)
-```bash
-# Evaluate QC data against established statistics
-python westgard_qc.py --data observations.csv --stats stats.csv
-
-# With JSON output and Levey-Jennings plot
-python westgard_qc.py --data observations.csv --stats stats.csv --json results.json --plot chart.png
-
-# Compute statistics from data itself
-python westgard_qc.py --data observations.csv
-```
-
-### Input CSV Format
-
-**Observations file** (`observations.csv`):
 ```csv
 run,level,value
-1,Level1,100.5
-1,Level2,198.2
-2,Level1,99.8
-2,Level2,203.1
+1,Level1,100
+1,Level2,201
+2,Level1,112
+2,Level2,200
 ```
 
-**Statistics file** (`stats.csv`) - optional:
+Established control statistics:
+
 ```csv
 level,mean,sd
-Level1,100.0,5.0
-Level2,200.0,10.0
+Level1,100,5
+Level2,200,10
 ```
 
-### 2. Enterprise CLI (Agents Framework)
-```bash
-# Run single task evaluation
-python cli.py audit --task-id TASK-01 --primary 28.5 --secondary 14.2
+Provide **independently established**, finite means and positive SDs for every control level. Duplicate run/level observations, duplicate statistics levels, missing values and non-finite measurements are rejected.
 
-# Batch process CSV records
-python cli.py batch -i input.csv -o results.csv
+## Rules implemented
 
-# Verify HMAC audit trail integrity
-python cli.py verify-audit
+| Rule | Outcome | Scope |
+| --- | --- | --- |
+| 1-2s | Warning | One observation at or beyond ±2 SD (below 3 SD) |
+| 1-3s | Reject | One observation at or beyond ±3 SD |
+| 2-2s | Reject | Two levels beyond the same ±2 SD side in one run, or one level in two consecutive runs |
+| R-4s | Reject | Two levels in one run, one ≥+2 SD and one ≤−2 SD, spanning at least 4 SD |
+| 4-1s | Reject | Four consecutive observations of one level at or beyond the same ±1 SD side |
+| 10x | Reject | Ten consecutive observations of one level strictly on the same side of the mean |
 
-# Launch FastAPI REST server
+Runs are processed in ascending numeric run order. A missing level breaks its across-run consecutive sequence; the evaluator does not bridge such gaps. This implementation evaluates 4-1s and 10x independently per level and does **not** implement all possible cross-level sequential variants of multirule QC.
+
+The application is a screening and educational aid. It does not authorize patient-result release, establish laboratory-specific control limits, or replace validated SOPs.
+
+## Python CLI
+
+Requires Python 3.10 or later:
+
+```sh
+python -m pip install -e '.[test]'
+python westgard_qc.py --data examples/qc_data.csv --stats examples/qc_stats.csv
+python westgard_qc.py --data examples/qc_data.csv --stats examples/qc_stats.csv --json results.json --plot chart.png
+python -m pytest -v
+node --test web/test-qc.cjs
+```
+
+Run locally as a static website:
+
+```sh
+python -m http.server 8001 --directory web
+```
+
+Then open `http://localhost:8001/` in a browser. The browser evaluator uses JavaScript for speed and compatibility; it does not execute Python through Pyodide.
+
+**Caution:** If `--stats` is omitted, the CLI computes sample mean/SD from the evaluated observations. That mode is suitable for exploratory demonstration, **not** independent QC assessment.
+
+## Python REST service
+
+```sh
 python cli.py serve --host 127.0.0.1 --port 8000
-
-# Supervisor chat query
-python cli.py chat "Explain QC conformance status"
 ```
 
-### 3. High-Throughput Simulation
-```bash
-# Run 1000-task simulation benchmark
-python simulator.py 1000
+The dedicated `POST /api/qc/evaluate` endpoint applies the same Westgard Python evaluator as the CLI:
+
+```json
+{
+  "observations": [{"run": 1, "level": "Level1", "value": 112.0}],
+  "statistics": [{"level": "Level1", "mean": 100, "sd": 5}]
+}
 ```
 
----
+The pre-existing `/api/audit`, `/api/chat` and agent-based `cli.py audit` commands are retained for compatibility, but use independent, generic heuristic rules; **their results must not be interpreted as Westgard QC evaluation**. Mock provider responses are not actual LLM integration.
 
-## 🛡️ Security & Enterprise Architecture
+### Containers and security
 
-* **Zero-PHI Outbound Interceptor:** Active AST and regex inspection blocking SSNs, MRNs, phone numbers, and patient identifiers.
-* **Tamper-Evident HMAC-SHA256 Audit Trail:** Chained, cryptographically signed logs for every evaluation and state transition.
-* **Path Traversal Protection:** Input file paths are validated to prevent directory traversal attacks.
-* **Secure Audit Key Management:** Audit secret key sourced from environment variable with development-only fallback and minimum length enforcement.
-* **FastAPI & Prometheus Telemetry:** Exposes OpenAPI 3.1 REST endpoints and operational Prometheus metrics (`/metrics`).
-
-### Security Configuration
-
-Set the `AUDIT_SECRET_KEY` environment variable for production deployments:
-```bash
-export AUDIT_SECRET_KEY="your-secure-random-key-min-16-chars"
+```sh
+export AUDIT_SECRET_KEY='replace-with-a-unique-strong-secret'
+docker compose up --build
 ```
 
----
+In production (`APP_ENV=production`), the server fails to start without `AUDIT_SECRET_KEY`. The audit trail computes HMAC-SHA256 signatures over event metadata; it is **in-memory**, not a persistent compliance-grade ledger. The optional identifier regex guard is not a complete PHI de-identification method. Do not expose the unauthenticated agent API on a public network or process clinical identifiers without appropriate institutional controls.
 
-## 🐳 Container Deployment
+The static web app does not send data to any server, use external fonts or analytics, or persist data in browser storage. Generated downloads remain local to the browser.
 
-```bash
-docker build -t westgard-qc-evaluator .
-docker run -p 8000:8000 -e AUDIT_SECRET_KEY="your-secure-key" westgard-qc-evaluator
-```
+## Project layout
 
-Using Docker Compose:
-```bash
-docker-compose up -d
-```
+- `westgard_qc.py` — multirule evaluator, CSV parser and optional Levey–Jennings PNG.
+- `web/` — static browser evaluator, rendering and standalone Node tests.
+- `agents/api.py` — FastAPI service with dedicated QC endpoint plus legacy agent endpoints.
+- `cli.py`, `agents/`, `enrichment.py`, `simulator.py` — legacy agent and simulation interfaces.
+- `tests/`, `test_westgard_qc.py` — Python tests.
+- `.github/workflows/` — Python/browser CI and GitHub Pages deployment.
 
----
+## License
 
-## 🧪 Testing & Verification
-
-Run the complete test suite:
-
-```bash
-pytest -v
-```
-
-Run with coverage:
-```bash
-pytest -v --cov=. --cov-report=html
-```
-
-Execute high-throughput batch simulation benchmarks:
-
-```bash
-python simulator.py --tasks 1000 --concurrency 8
-```
-
----
-
-## 📁 Project Structure
-
-```
-westgard-qc-evaluator/
-├── westgard_qc.py          # Core Westgard multirule evaluation engine
-├── cli.py                  # Command-line interface
-├── simulator.py            # High-throughput simulation benchmark
-├── enrichment.py           # Enrichment feature suite
-├── requirements.txt        # Python dependencies
-├── pyproject.toml          # Build configuration
-├── Dockerfile              # Container build definition
-├── docker-compose.yml      # Container orchestration
-├── benchmark_dataset.json  # Golden benchmark test cases
-├── agents/
-│   ├── __init__.py         # Package init
-│   ├── base.py             # PHI guard, HMAC audit trail, security
-│   ├── models.py           # Pydantic data models
-│   ├── supervisor.py       # Multi-agent orchestration
-│   ├── workers.py          # Specialized worker agents
-│   ├── api.py              # FastAPI REST endpoints
-│   ├── llm_factory.py      # LLM integration (mock, Ollama, Claude, GPT)
-│   ├── learning.py         # Bayesian calibration engine
-│   ├── metrics.py          # Prometheus metrics exporter
-│   └── streamer.py         # WebSocket telemetry broadcaster
-├── tests/
-│   ├── test_westgard_qc_evaluator.py  # Agent framework tests
-│   ├── test_westgard_core.py          # Core algorithm & security tests
-│   └── test_enrichment.py             # Enrichment module tests
-└── web/
-    └── index.html          # Web dashboard
-```
-
----
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) for details.
+[MIT](LICENSE).

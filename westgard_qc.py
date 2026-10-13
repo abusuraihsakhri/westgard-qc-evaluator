@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 import sys
 from collections import OrderedDict
@@ -100,13 +101,15 @@ def read_observations(path: str) -> List[Observation]:
         for row in reader:
             if not row.get(colmap["run"], "").strip():
                 continue  # skip blank lines
-            observations.append(
-                Observation(
-                    run=int(row[colmap["run"]]),
-                    level=row[colmap["level"]].strip(),
-                    value=float(row[colmap["value"]]),
-                )
-            )
+            try:
+                run = int(row[colmap["run"]])
+                level = row[colmap["level"]].strip()
+                value = float(row[colmap["value"]])
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise ValueError(f"{path}: invalid observation at CSV row {reader.line_num}") from exc
+            if not level or not math.isfinite(value):
+                raise ValueError(f"{path}: level and finite value required at CSV row {reader.line_num}")
+            observations.append(Observation(run=run, level=level, value=value))
     if not observations:
         raise ValueError(f"{path}: no data rows found")
     return observations
@@ -131,9 +134,13 @@ def read_established_stats(path: str) -> Dict[str, Tuple[float, float]]:
                 continue
             mean = float(row[colmap["mean"]])
             sd = float(row[colmap["sd"]])
-            if sd <= 0:
-                raise ValueError(f"{path}: SD for level '{level}' must be > 0")
+            if not math.isfinite(mean) or not math.isfinite(sd) or sd <= 0:
+                raise ValueError(f"{path}: finite mean and SD > 0 required for level '{level}'")
+            if level in stats:
+                raise ValueError(f"{path}: duplicate established statistics for level '{level}'")
             stats[level] = (mean, sd)
+    if not stats:
+        raise ValueError(f"{path}: no valid statistics rows found")
     return stats
 
 
@@ -147,6 +154,8 @@ def compute_established_stats(observations: List[Observation]) -> Dict[str, Tupl
     stats: Dict[str, Tuple[float, float]] = {}
     for level, values in by_level.items():
         arr = np.array(values, dtype=float)
+        if not np.isfinite(arr).all():
+            raise ValueError(f"Non-finite observation for level '{level}'")
         if arr.size < 2:
             raise ValueError(
                 f"Cannot compute an established SD for level '{level}' "
@@ -154,8 +163,8 @@ def compute_established_stats(observations: List[Observation]) -> Dict[str, Tupl
             )
         mean = float(np.mean(arr))
         sd = float(np.std(arr, ddof=1))  # sample SD, matches lab QC convention
-        if sd == 0:
-            raise ValueError(f"Computed SD for level '{level}' is 0 (all values identical)")
+        if not math.isfinite(mean) or not math.isfinite(sd) or sd <= 0:
+            raise ValueError(f"Computed SD for level '{level}' must be finite and > 0")
         stats[level] = (mean, sd)
     return stats
 
@@ -167,7 +176,12 @@ def organize_by_run(
     run_data: "OrderedDict[int, Dict[str, float]]" = OrderedDict()
     level_order: List[str] = []
     for obs in sorted(observations, key=lambda o: o.run):
-        run_data.setdefault(obs.run, OrderedDict())[obs.level] = obs.value
+        if not obs.level or not math.isfinite(obs.value):
+            raise ValueError(f"Non-finite value or missing level at run {obs.run}")
+        values = run_data.setdefault(obs.run, OrderedDict())
+        if obs.level in values:
+            raise ValueError(f"Duplicate observation for run {obs.run}, level '{obs.level}'")
+        values[obs.level] = obs.value
         if obs.level not in level_order:
             level_order.append(obs.level)
     runs_ordered = list(run_data.keys())
@@ -230,7 +244,11 @@ def evaluate_series(
         # --- single-point rules: 1-2s (warning), 1-3s (reject) -----------
         for level, value in levels_in_run.items():
             mean, sd = stats[level]
+            if not math.isfinite(mean) or not math.isfinite(sd) or sd <= 0 or not math.isfinite(value):
+                raise ValueError(f"Invalid statistics or observation for level '{level}'")
             z = (value - mean) / sd
+            if not math.isfinite(z):
+                raise ValueError(f"Non-finite z-score for level '{level}'")
             z_scores[level] = z
             if abs(z) >= REJECT_LIMIT:
                 violations.append(Violation(
@@ -249,7 +267,8 @@ def evaluate_series(
             zmax_level = max(levels_present, key=lambda l: z_scores[l])
             zmin_level = min(levels_present, key=lambda l: z_scores[l])
             zmax, zmin = z_scores[zmax_level], z_scores[zmin_level]
-            if (zmax - zmin) >= RANGE_4S_LIMIT:
+            if (zmax >= WARNING_LIMIT and zmin <= -WARNING_LIMIT
+                    and (zmax - zmin) >= RANGE_4S_LIMIT):
                 violations.append(Violation(
                     rule="R-4s", scope="within-run", levels=[zmax_level, zmin_level], is_rejection=True,
                     message=(f"Range between {zmax_level} (z={zmax:+.2f}) and {zmin_level} "
@@ -268,6 +287,12 @@ def evaluate_series(
                     rule="2-2s", scope="within-run", levels=neg2, is_rejection=True,
                     message=f"Levels {neg2} both exceed -2SD within the same run",
                 ))
+
+        # A missing control level breaks its series of consecutive runs.
+        # Do not bridge gaps when applying across-run rules.
+        for prior_level in history:
+            if prior_level not in levels_in_run:
+                history[prior_level].clear()
 
         # --- update per-level history, then across-run rules --------------
         for level in levels_present:
