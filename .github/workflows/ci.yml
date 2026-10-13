@@ -1,4 +1,4 @@
-name: Westgard Qc Evaluator CI/CD & Security Verification
+name: Westgard QC CI
 
 on:
   push:
@@ -30,7 +30,18 @@ jobs:
       run: |
         python -m pytest -v
 
-    - name: Security SAST & Zero-PHI Audit
+    - name: Validate JavaScript and run browser rule tests
+      run: |
+        node --check web/qc.js
+        node --check web/app.js
+        node --test web/test-qc.cjs
+
+    - name: Package and code sanity checks
+      run: |
+        python -m pip check
+        python -m compileall -q westgard_qc.py agents cli.py enrichment.py simulator.py
+
+    - name: Audit-chain integrity smoke test
       run: |
         python -c "
         from agents.base import PHIGuard, AuditLogger
